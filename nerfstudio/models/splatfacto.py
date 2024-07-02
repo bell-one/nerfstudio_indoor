@@ -182,7 +182,7 @@ class SplatfactoModelConfig(ModelConfig):
     However, PLY exported with antialiased rasterize mode is not compatible with classic mode. Thus many web viewers that
     were implemented for classic mode can not render antialiased mode PLY properly without modifications.
     """
-    camera_optimizer: CameraOptimizerConfig = field(default_factory=lambda: CameraOptimizerConfig(mode="off"))
+    camera_optimizer: CameraOptimizerConfig = field(default_factory=lambda: CameraOptimizerConfig(mode="SO3xR3"))
     """Config of the camera optimizer to use"""
 
 
@@ -757,10 +757,29 @@ class SplatfactoModel(Model):
             colors_crop = torch.sigmoid(colors_crop)
             sh_degree_to_use = None
 
+        import torch.nn.functional as F
+        def reduce_smallest_to_near_zero(scales_crop, epsilon=1e-6, temperature=1e-3):
+            # exp 적용
+            exp_scales = torch.exp(scales_crop)
+
+            # softmin 계산
+            softmin = F.softmin(exp_scales / temperature, dim=-1)
+
+            # 가장 작은 값에 가까울수록 1에 가까운 마스크 생성
+            mask = 1 - softmin
+
+            # epsilon을 더해 0으로 나누는 것을 방지하고, 가장 작은 값을 거의 0에 가깝게 만듦
+            result = exp_scales * (mask + epsilon)
+
+            return result
+
+
+
         render, alpha, info = rasterization(
             means=means_crop,
             quats=quats_crop / quats_crop.norm(dim=-1, keepdim=True),
             scales=torch.exp(scales_crop),
+            #scales=reduce_smallest_to_near_zero(scales_crop),
             opacities=torch.sigmoid(opacities_crop).squeeze(-1),
             colors=colors_crop,
             viewmats=viewmat,  # [1, 4, 4]
